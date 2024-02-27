@@ -16,9 +16,14 @@ type Model struct {
 	textarea    textarea.Model
 	senderStyle lipgloss.Style
 	err         error
+	provider    LlamaProvider
 }
 
-func InitialModel() Model {
+type LlamaProvider interface {
+	SendMessage(text string) string 
+}
+
+func InitialModel(provider LlamaProvider) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message..."
 	ta.Focus()
@@ -46,6 +51,7 @@ Type a message and press Enter to send.`)
 		viewport:    vp,
 		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
 		err:         nil,
+		provider:    provider,
 	}
 }
 
@@ -70,6 +76,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case tea.KeyEnter:
 			m.messages = append(m.messages, m.senderStyle.Render("You: ")+m.textarea.Value())
+			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+			res := m.provider.SendMessage(m.textarea.Value())
+			m.messages = append(m.messages, m.senderStyle.Render("Bot: ")+res)
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
 			m.textarea.Reset()
 			m.viewport.GotoBottom()
