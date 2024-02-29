@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -17,21 +18,22 @@ type Model struct {
 	senderStyle lipgloss.Style
 	err         error
 	provider    LlamaProvider
+	prompt      string
 }
 
 type LlamaProvider interface {
-	SendMessage(text string) string 
+	SendMessage(text string) string
 }
 
 func InitialModel(provider LlamaProvider) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Send a message..."
+	ta.Placeholder = "Send a prompt..."
 	ta.Focus()
 
 	ta.Prompt = "┃ "
 	ta.CharLimit = 280
 
-	ta.SetWidth(30)
+	ta.SetWidth(80)
 	ta.SetHeight(3)
 
 	// Remove cursor line styling
@@ -39,17 +41,20 @@ func InitialModel(provider LlamaProvider) Model {
 
 	ta.ShowLineNumbers = false
 
-	vp := viewport.New(30, 5)
-	vp.SetContent(`Welcome to the chat room!
-Type a message and press Enter to send.`)
+	vp := viewport.New(80, 5)
+	vp.SetContent(`
+	Hello!
+	How can i help you?
+	`)
 
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return Model{
 		textarea:    ta,
 		messages:    []string{},
+		prompt:      "",
 		viewport:    vp,
-		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
+		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("#DC9D0A")),
 		err:         nil,
 		provider:    provider,
 	}
@@ -65,6 +70,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vpCmd tea.Cmd
 	)
 
+	hostName, _ := os.Hostname()
+
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
 
@@ -72,19 +79,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
-			fmt.Println(m.textarea.Value())
 			return m, tea.Quit
 		case tea.KeyEnter:
-			m.messages = append(m.messages, m.senderStyle.Render("You: ")+m.textarea.Value())
+			m.prompt = m.textarea.Value()
+			m.messages = append(m.messages, m.senderStyle.Render(hostName+": ")+m.prompt)
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
-			res := m.provider.SendMessage(m.textarea.Value())
-			m.messages = append(m.messages, m.senderStyle.Render("Bot: ")+res)
-			m.viewport.SetContent(strings.Join(m.messages, "\n"))
-			m.textarea.Reset()
 			m.viewport.GotoBottom()
+			m.textarea.Reset()
+			return m, sendPrompt(m)
 		}
 
-	// We handle errors just like any other message
+	case resultMsg:
+		m.messages = append(m.messages, m.senderStyle.Render("Bot: ")+string(msg))
+		m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.viewport.Height = m.viewport.TotalLineCount()
+		m.viewport.GotoBottom()
+
 	case errMsg:
 		m.err = msg
 		return m, nil
@@ -100,3 +110,12 @@ func (m Model) View() string {
 		m.textarea.View(),
 	) + "\n\n"
 }
+
+func sendPrompt(m Model) tea.Cmd {
+	return func() tea.Msg {
+		res := m.provider.SendMessage(m.prompt)
+		return resultMsg(res)
+	}
+}
+
+type resultMsg string
