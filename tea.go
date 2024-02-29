@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,15 +18,19 @@ type Model struct {
 	textarea    textarea.Model
 	senderStyle lipgloss.Style
 	err         error
-	provider    LlamaProvider
+	provider    AiProvider
 	prompt      string
+	isLoading   bool
+	spinner     spinner.Model
 }
 
-type LlamaProvider interface {
+type AiProvider interface {
 	SendMessage(text string) string
 }
 
-func InitialModel(provider LlamaProvider) Model {
+var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+
+func InitialModel(provider AiProvider) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a prompt..."
 	ta.Focus()
@@ -41,13 +46,17 @@ func InitialModel(provider LlamaProvider) Model {
 
 	ta.ShowLineNumbers = false
 
-	vp := viewport.New(80, 5)
+	vp := viewport.New(80, 3)
 	vp.SetContent(`
 	Hello!
 	How can i help you?
 	`)
 
 	ta.KeyMap.InsertNewline.SetEnabled(false)
+
+	modelSpinner := spinner.New()
+	modelSpinner.Spinner = spinner.Points
+	modelSpinner.Style = spinnerStyle
 
 	return Model{
 		textarea:    ta,
@@ -57,11 +66,13 @@ func InitialModel(provider LlamaProvider) Model {
 		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("#DC9D0A")),
 		err:         nil,
 		provider:    provider,
+		isLoading:   false,
+		spinner:     modelSpinner,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, m.spinner.Tick)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -86,14 +97,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
 			m.viewport.GotoBottom()
 			m.textarea.Reset()
+			m.isLoading = true
 			return m, sendPrompt(m)
 		}
 
 	case resultMsg:
 		m.messages = append(m.messages, m.senderStyle.Render("Bot: ")+string(msg))
+		m.isLoading = false
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.viewport.Height = m.viewport.TotalLineCount()
 		m.viewport.GotoBottom()
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case errMsg:
 		m.err = msg
@@ -104,9 +122,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	spinner := ""
+	if m.isLoading {
+		spinner = m.spinner.View()
+	}
 	return fmt.Sprintf(
-		"%s\n\n%s",
+		"%s\n%s\n\n%s",
 		m.viewport.View(),
+		spinner,
 		m.textarea.View(),
 	) + "\n\n"
 }
