@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.design/x/clipboard"
 )
 
 type Model struct {
@@ -31,6 +32,11 @@ type AiProvider interface {
 var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 
 func InitialModel(provider AiProvider) Model {
+	err := clipboard.Init()
+	if err != nil {
+		panic(err)
+	}
+
 	ta := textarea.New()
 	ta.Placeholder = "Send a prompt..."
 	ta.Focus()
@@ -95,17 +101,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prompt = m.textarea.Value()
 			m.messages = append(m.messages, m.senderStyle.Render(hostName+": ")+m.prompt)
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+			m.showLoading()
 			m.viewport.GotoBottom()
-			m.textarea.Reset()
-			m.isLoading = true
 			return m, sendPrompt(m)
+		}
+		switch msg.String() {
+		case "alt+v":
+			docs := string(clipboard.Read(clipboard.FmtText))
+			m.prompt = "translate to Vietnamese: " + docs
+			m.showLoading()
+			return m, translate(m)
+		case "alt+e":
+			docs := string(clipboard.Read(clipboard.FmtText))
+			m.prompt = "translate to English: " + docs
+			m.showLoading()
+			return m, translate(m)
 		}
 
 	case resultMsg:
 		m.messages = append(m.messages, m.senderStyle.Render("Bot: ")+string(msg))
 		m.isLoading = false
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
-		m.viewport.Height = m.viewport.TotalLineCount()
+		m.viewport.Height = m.viewport.TotalLineCount() + 2
 		m.viewport.GotoBottom()
 
 	case spinner.TickMsg:
@@ -134,9 +151,22 @@ func (m Model) View() string {
 	) + "\n\n"
 }
 
+func (m *Model) showLoading() {
+	m.isLoading = true
+	m.textarea.Reset()
+}
+
 func sendPrompt(m Model) tea.Cmd {
 	return func() tea.Msg {
 		res := m.provider.SendMessage(m.prompt)
+		return resultMsg(res)
+	}
+}
+
+func translate(m Model) tea.Cmd {
+	return func() tea.Msg {
+		res := m.provider.SendMessage(m.prompt)
+		clipboard.Write(clipboard.FmtText, []byte(res))
 		return resultMsg(res)
 	}
 }
