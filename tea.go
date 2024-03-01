@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -29,7 +30,8 @@ type AiProvider interface {
 	SendMessage(text string) string
 }
 
-var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+var secondaryColor = lipgloss.NewStyle().Foreground(lipgloss.Color("#43F55E"))
+var dangerColor = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444"))
 
 func InitialModel(provider AiProvider) Model {
 	err := clipboard.Init()
@@ -62,7 +64,7 @@ func InitialModel(provider AiProvider) Model {
 
 	modelSpinner := spinner.New()
 	modelSpinner.Spinner = spinner.Points
-	modelSpinner.Style = spinnerStyle
+	modelSpinner.Style = secondaryColor
 
 	return Model{
 		textarea:    ta,
@@ -105,25 +107,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, sendPrompt(m)
 		}
+
+		clipDocs := string(clipboard.Read(clipboard.FmtText))
+
 		switch msg.String() {
 		case "alt+v":
-			docs := string(clipboard.Read(clipboard.FmtText))
-			m.prompt = "translate to Vietnamese: " + docs
+			m.prompt = "translate to Vietnamese: " + clipDocs
 			m.showLoading()
 			return m, translate(m)
 		case "alt+e":
-			docs := string(clipboard.Read(clipboard.FmtText))
-			m.prompt = "translate to English: " + docs
+			m.prompt = "translate to English: " + clipDocs
 			m.showLoading()
 			return m, translate(m)
+		case "alt+g":
+			m.prompt = clipDocs
+			// m = m.checkTextarea("")
+			m.showLoading()
+			return m, checkGrammar(m)
 		}
 
 	case resultMsg:
-		m.messages = append(m.messages, m.senderStyle.Render("Bot: ")+string(msg))
+		m.messages = append(m.messages, secondaryColor.Render("Bot: ")+string(msg))
 		m.isLoading = false
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
-		m.viewport.Height = m.viewport.TotalLineCount() + 2
-		m.viewport.GotoBottom()
+		m.resizeViewport()
+
+	case grammarResult:
+		if !msg.Correct {
+			m.messages = append(m.messages, dangerColor.Render("Có lỗi ngữ pháp!"))
+			m.messages = append(m.messages, m.senderStyle.Render("Bản gốc: ")+string(msg.Origin)+"\n")
+			m.messages = append(m.messages, secondaryColor.Render(msg.Explanation)+"\n")
+			m.messages = append(m.messages, m.senderStyle.Render("Sửa lại => ")+string(msg.Fixed))
+		} else {
+			m.messages = append(m.messages, secondaryColor.Render("Không có lỗi!\n"))
+			m.messages = append(m.messages, m.senderStyle.Render("Bản gốc: ")+string(msg.Origin))
+		}
+		m.isLoading = false
+		m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.resizeViewport()
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -155,6 +176,20 @@ func (m *Model) showLoading() {
 	m.isLoading = true
 	m.textarea.Reset()
 }
+func (m *Model) resizeViewport() {
+	m.viewport.Height = m.viewport.TotalLineCount() + 2
+	m.viewport.GotoBottom()
+}
+
+func (m Model) checkTextarea(prompt string) Model {
+	clipDocs := string(clipboard.Read(clipboard.FmtText))
+	if m.textarea.Value() != "" {
+		m.prompt = prompt + m.textarea.Value()
+	} else {
+		m.prompt = prompt + clipDocs
+	}
+	return m
+}
 
 func sendPrompt(m Model) tea.Cmd {
 	return func() tea.Msg {
@@ -171,4 +206,26 @@ func translate(m Model) tea.Cmd {
 	}
 }
 
+func checkGrammar(m Model) tea.Cmd {
+	var checkResult grammarResult
+	prompt := "Grammar check: " + m.prompt + ". Response a result in json object with syntax: {\"correct\": true/false, \"falseWords\": [{\"word\": \"falseWord1\", \"index\": index of falseWord1 in sentence separator by space}, {\"word\": \"falseWord2\", \"index\": index of falseWord2 in sentence separator by space}] , \"explanation\": \"explanation grammar errors by vietnamese\" , \"fixed\": \"sentence with grammar fixed\"}"
+	return func() tea.Msg {
+		res := m.provider.SendMessage(prompt)
+		json.Unmarshal([]byte(res), &checkResult)
+		checkResult.Origin = m.prompt
+		clipboard.Write(clipboard.FmtText, []byte(checkResult.Fixed))
+		return checkResult
+	}
+}
+
 type resultMsg string
+type grammarResult struct {
+	Correct    bool `json:"correct"`
+	FalseWords []struct {
+		Word  string `json:"word"`
+		Index int    `json:"index"`
+	} `json:"falseWords"`
+	Explanation string `json:"explanation"`
+	Fixed       string `json:"fixed"`
+	Origin      string `json:"origin"`
+}
