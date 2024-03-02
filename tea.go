@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	// "sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -108,20 +110,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, sendPrompt(m)
 		}
 
-		clipDocs := string(clipboard.Read(clipboard.FmtText))
-
 		switch msg.String() {
 		case "alt+v":
-			m.prompt = "translate to Vietnamese: " + clipDocs
+			prompt := "translate to Vietnamese: "
+			m = m.checkTextarea(prompt)
 			m.showLoading()
 			return m, translate(m)
 		case "alt+e":
-			m.prompt = "translate to English: " + clipDocs
+			prompt := "translate to English: " 
+			m = m.checkTextarea(prompt)
 			m.showLoading()
 			return m, translate(m)
-		case "alt+g":
-			m.prompt = clipDocs
-			// m = m.checkTextarea("")
+		case "ctrl+g":
+			m = m.checkTextarea("")
 			m.showLoading()
 			return m, checkGrammar(m)
 		}
@@ -209,12 +210,45 @@ func translate(m Model) tea.Cmd {
 func checkGrammar(m Model) tea.Cmd {
 	var checkResult grammarResult
 	prompt := "Grammar check: " + m.prompt + ". Response a result in json object with syntax: {\"correct\": true/false, \"falseWords\": [{\"word\": \"falseWord1\", \"index\": index of falseWord1 in sentence separator by space}, {\"word\": \"falseWord2\", \"index\": index of falseWord2 in sentence separator by space}] , \"explanation\": \"explanation grammar errors by vietnamese\" , \"fixed\": \"sentence with grammar fixed\"}"
+
+	// USE waitgroup to wait for the goroutine
+
+	// var wg sync.WaitGroup
+	// wg.Add(1)
+	// return func() tea.Msg {
+	// 	res := m.provider.SendMessage(prompt)
+	// 	go func() {
+	// 		defer wg.Done()
+	// 		err := json.Unmarshal([]byte(string(res)), &checkResult)
+	// 		if err != nil {
+	// 			fmt.Println(err)
+	// 		}
+	// 	}()
+	// 	wg.Wait()
+	// 	checkResult.Origin = m.prompt
+	// 	clipboard.Write(clipboard.FmtText, []byte(checkResult.Fixed))
+	// 	return checkResult
+	// }
+
+	// USE channel to wait for the goroutine
+	ch := make(chan grammarResult)
 	return func() tea.Msg {
-		res := m.provider.SendMessage(prompt)
-		json.Unmarshal([]byte(res), &checkResult)
-		checkResult.Origin = m.prompt
-		clipboard.Write(clipboard.FmtText, []byte(checkResult.Fixed))
-		return checkResult
+		response := m.provider.SendMessage(prompt)
+		go func() {
+			err := json.Unmarshal([]byte(string(response)), &checkResult)
+			if err != nil {
+				fmt.Println(err)
+			}
+			checkResult.Origin = m.prompt
+			clipboard.Write(clipboard.FmtText, []byte(checkResult.Fixed))
+			ch <- checkResult
+		}()
+		select {
+		case result := <-ch:
+			return result
+		case <-time.After(10 * time.Second):
+			return nil
+		}
 	}
 }
 
