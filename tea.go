@@ -111,13 +111,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "alt+v":
+		case "ctrl+s":
 			prompt := "translate to Vietnamese: "
 			m = m.checkTextarea(prompt)
 			m.showLoading()
 			return m, translate(m)
-		case "alt+e":
-			prompt := "translate to English: " 
+		case "ctrl+e":
+			prompt := "translate to English: "
 			m = m.checkTextarea(prompt)
 			m.showLoading()
 			return m, translate(m)
