@@ -17,15 +17,17 @@ import (
 )
 
 type Model struct {
-	viewport    viewport.Model
-	messages    []string
-	textarea    textarea.Model
-	senderStyle lipgloss.Style
-	err         error
-	provider    AiProvider
-	prompt      string
-	isLoading   bool
-	spinner     spinner.Model
+	viewport       viewport.Model
+	messages       []string
+	textarea       textarea.Model
+	senderStyle    lipgloss.Style
+	err            error
+	provider       AiProvider
+	prompt         string
+	isLoading      bool
+	isShowTextarea bool
+	ready          bool
+	spinner        spinner.Model
 }
 
 type AiProvider interface {
@@ -69,15 +71,16 @@ func InitialModel(provider AiProvider) Model {
 	modelSpinner.Style = secondaryColor
 
 	return Model{
-		textarea:    ta,
-		messages:    []string{},
-		prompt:      "",
-		viewport:    vp,
-		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("#DC9D0A")),
-		err:         nil,
-		provider:    provider,
-		isLoading:   false,
-		spinner:     modelSpinner,
+		textarea:       ta,
+		messages:       []string{},
+		prompt:         "",
+		senderStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("#DC9D0A")),
+		err:            nil,
+		provider:       provider,
+		ready:          false,
+		isLoading:      false,
+		isShowTextarea: true,
+		spinner:        modelSpinner,
 	}
 }
 
@@ -125,11 +128,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.checkTextarea("")
 			m.showLoading()
 			return m, checkGrammar(m)
+		case "i":
+			m.isShowTextarea = true
+			if m.textarea.Value() == "i" {
+				m.textarea.Reset()
+			}
+			return m, nil
+		}
+
+	case tea.WindowSizeMsg:
+		if !m.ready {
+			m.viewport = viewport.New(msg.Width, msg.Height - 6)
+			// m.viewport.YPosition = 3
+			m.viewport.SetContent("Type some shit!")
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height
 		}
 
 	case resultMsg:
 		m.messages = append(m.messages, secondaryColor.Render("Bot: ")+string(msg))
 		m.isLoading = false
+		m.isShowTextarea = false
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.resizeViewport()
 
@@ -144,6 +165,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, m.senderStyle.Render("Bản gốc: ")+string(msg.Origin))
 		}
 		m.isLoading = false
+		m.isShowTextarea = false
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.resizeViewport()
 
@@ -162,14 +184,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	spinner := ""
+	textarea := ""
 	if m.isLoading {
 		spinner = m.spinner.View()
+	}
+	if m.isShowTextarea {
+		textarea = m.textarea.View()
 	}
 	return fmt.Sprintf(
 		"%s\n%s\n\n%s",
 		m.viewport.View(),
 		spinner,
-		m.textarea.View(),
+		textarea,
 	) + "\n\n"
 }
 
@@ -209,7 +235,7 @@ func translate(m Model) tea.Cmd {
 
 func checkGrammar(m Model) tea.Cmd {
 	var checkResult grammarResult
-	prompt := "Grammar check: " + m.prompt + ". Response a result in json object with syntax: {\"correct\": true/false, \"falseWords\": [{\"word\": \"falseWord1\", \"index\": index of falseWord1 in sentence separator by space}, {\"word\": \"falseWord2\", \"index\": index of falseWord2 in sentence separator by space}] , \"explanation\": \"explanation grammar errors by vietnamese\" , \"fixed\": \"sentence with grammar fixed\"}"
+	prompt := "Grammar check: " + m.prompt + ". Response a result in json object with syntax: {\"correct\": true/false, \"falseWords\": [{\"word\": \"falseWord1\", \"index\": index of falseWord1 in sentence separator by space}, {\"word\": \"falseWord2\", \"index\": index of falseWord2 in sentence separator by space}], \"fixed\": \"grammar fixed\" , \"explanation\": \"explanation grammar errors by vietnamese\" }"
 
 	// USE waitgroup to wait for the goroutine
 
